@@ -1,7 +1,10 @@
 import rospy
 import message_filters
+from std_msgs.msg import Float32
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import PoseWithCovarianceStamped, Pose
+from sensor_msgs.msg import PointCloud2
+import ros_numpy
 from tf.transformations import quaternion_matrix
 from sel_map_mapper import Pose, Mapper, SaveOptions
 from sel_map_mesh import TriangularMesh
@@ -19,8 +22,8 @@ firstPose = True
 rotate = False
 savingFlag = False
 initialTime = None
-save_interval = rospy.Duration(0,0)
-last_save = rospy.Duration(0,0)
+save_interval = rospy.Duration(0, 0)
+last_save = rospy.Duration(0, 0)
 world_base = "odom"
 
 # EXTRA
@@ -28,28 +31,40 @@ threaded = True
 publish = True
 tfBuffer = tf2_ros.Buffer()
 
+time_pub = rospy.Publisher("/cost_time_per_frame", Float32, queue_size=1)
+
+
 def syncedCallback(rgb, depth, info, pose=None, meta=None):
     global map, cv_bridge, firstPose, rotate, savingFlag, initialTime, last_save, world_base
     # get poses ready #TODO bring robot back into picture
     if pose is None:
         try:
-            tf_stamped = tfBuffer.lookup_transform(world_base, depth.header.frame_id, depth.header.stamp, rospy.Duration(0.01))
-        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            tf_stamped = tfBuffer.lookup_transform(world_base,
+                                                   depth.header.frame_id,
+                                                   depth.header.stamp,
+                                                   rospy.Duration(0.01))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException):
             return
         location = tf_stamped.transform.translation
         location = np.array([location.x, location.y, location.z])
         # re-orient transform to match camera frame.
         rot = tf_stamped.transform.rotation
         rot = quaternion_matrix([rot.x, rot.y, rot.z, rot.w])
-        rot = rot[:3,:3] @ np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
+        rot = rot[:3, :3] @ np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
     else:
         try:
-            pose = pose.pose # Adapt for with covariance, but ignore that for now.
+            # Adapt for with covariance, but ignore that for now.
+            pose = pose.pose
         except:
             pass
-        rot = quaternion_matrix([pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z, pose.pose.orientation.w])
-        rot = rot[:3,:3]
-        location = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
+        rot = quaternion_matrix([
+            pose.pose.orientation.x, pose.pose.orientation.y,
+            pose.pose.orientation.z, pose.pose.orientation.w
+        ])
+        rot = rot[:3, :3]
+        location = np.array(
+            [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
     rospy.loginfo("[sel_map] Message received!")
     pose = Pose(location=location, rotation=rot)
     # Set initial pose.
@@ -73,7 +88,7 @@ def syncedCallback(rgb, depth, info, pose=None, meta=None):
 
     # Tuple for RGB-D
     rgbd = (rgb_np, depth_np)
-    R = np.array([[0,0,1],[1,0,0],[0,1,0]]) #TODO
+    R = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]])  # TODO
 
     intrinsic = None
     if info is not None:
@@ -81,30 +96,110 @@ def syncedCallback(rgb, depth, info, pose=None, meta=None):
 
     # Update the map
     # indoor data seems to have negative depth values resulting in a seg fault
-    map.update(pose, rgbd, intrinsic=intrinsic, R=R, min_depth=0.5, max_depth=8.0)
-    
+    map.update(pose,
+               rgbd,
+               intrinsic=intrinsic,
+               R=R,
+               min_depth=0.5,
+               max_depth=8.0)
+
     # Queue a new publish (without saving for now)
     if savingFlag:
         timestamp = (rospy.Time.now() - initialTime)
         interval = timestamp - last_save
         if interval >= save_interval:
-            map.queueSavePublish(save=savingFlag, publish=publish, timestamp=timestamp)
+            map.queueSavePublish(save=savingFlag,
+                                 publish=publish,
+                                 timestamp=timestamp)
             last_save = timestamp
         else:
             map.queueSavePublish(save=False, publish=publish)
     else:
         map.queueSavePublish(save=False, publish=publish)
 
+
+def pclSyncedCallback(pcl, pose=None, meta=None):
+    t0 = rospy.Time.now().to_sec()
+    global map, cv_bridge, firstPose, rotate, savingFlag, initialTime, last_save, world_base, time_n, time_sum
+    # get poses ready #TODO bring robot back into picture
+    if pose is None:
+        try:
+            tf_stamped = tfBuffer.lookup_transform(world_base,
+                                                   pcl.header.frame_id,
+                                                   pcl.header.stamp,
+                                                   rospy.Duration(0.01))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException):
+            return
+        location = tf_stamped.transform.translation
+        location = np.array([location.x, location.y, location.z])
+        # re-orient transform to match camera frame.
+        rot = tf_stamped.transform.rotation
+        rot = quaternion_matrix([rot.x, rot.y, rot.z, rot.w])
+        rot = rot[:3, :3] @ np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
+    else:
+        try:
+            # Adapt for with covariance, but ignore that for now.
+            pose = pose.pose
+        except:
+            pass
+        rot = quaternion_matrix([
+            pose.pose.orientation.x, pose.pose.orientation.y,
+            pose.pose.orientation.z, pose.pose.orientation.w
+        ])
+        rot = rot[:3, :3]
+        location = np.array(
+            [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
+    rospy.loginfo("[sel_map] Message received!")
+    pose = Pose(location=location, rotation=rot)
+    # Set initial pose.
+    if firstPose:
+        map.frame.origin.location[0:2] = location[0:2]
+        initialTime = rospy.Time.now()
+        firstPose = False
+
+    # transfer PointCloud2 to numpy array
+    pcl = ros_numpy.point_cloud2.pointcloud2_to_xyz_array(pcl)
+
+    # Update the map
+    # indoor data seems to have negative depth values resulting in a seg fault
+    map.updateByPCL(pose,
+                    pcl,
+                    min_depth=0.5,
+                    max_depth=8.0)
+    t1 = Float32()
+    t1.data = rospy.Time.now().to_sec()-t0
+    time_pub.publish(t1)
+    time_sum = time_sum + t1.data
+    time_n = time_n + 1
+    print("time_avg", time_sum/time_n)
+    # Queue a new publish (without saving for now)
+    if savingFlag:
+        timestamp = (rospy.Time.now() - initialTime)
+        interval = timestamp - last_save
+        if interval >= save_interval:
+            map.queueSavePublish(save=savingFlag,
+                                 publish=publish,
+                                 timestamp=timestamp)
+            last_save = timestamp
+        else:
+            map.queueSavePublish(save=False, publish=publish)
+    else:
+        map.queueSavePublish(save=False, publish=publish)
+
+
 def sel_map_node(mesh_bounds, elementLength, thresholdElemToMove):
-    global map, cv_bridge, firstPose, rotate, savingFlag, save_interval, world_base
+    global map, cv_bridge, firstPose, rotate, savingFlag, save_interval, world_base, time_n, time_sum
+    time_n = 0.
+    time_sum = 0.
 
     rospy.init_node('sel_map')
     cv_bridge = CvBridge()
     tf2_ros.TransformListener(tfBuffer)
 
     # Get parameters
-    num_cameras = rospy.get_param("num_cameras", 1) # TODO
-    update_policy = rospy.get_param("update_policy", "fifo") # TODO
+    num_cameras = rospy.get_param("num_cameras", 1)  # TODO
+    update_policy = rospy.get_param("update_policy", "fifo")  # TODO
     sync_slop = rospy.get_param("sync_slop", 0.3)
     queue_size = rospy.get_param("queue_size", 2)
     point_limit = rospy.get_param("point_limit", 20)
@@ -130,40 +225,68 @@ def sel_map_node(mesh_bounds, elementLength, thresholdElemToMove):
 
     # Prepare elements for the map
     segmentation_network = CameraSensor()
-    mesh = TriangularMesh(bounds=np.asarray(mesh_bounds), elementLength=elementLength, pointLimit=point_limit, terrainClasses=segmentation_network.labels, heightPartition=10, heightSafetyCheck=0.2)
+    mesh = TriangularMesh(bounds=np.asarray(mesh_bounds),
+                          elementLength=elementLength,
+                          pointLimit=point_limit,
+                          terrainClasses=segmentation_network.labels,
+                          heightPartition=10,
+                          heightSafetyCheck=0.2)
     mesh.create()
-    map = Mapper(mesh, segmentation_network, thresholdElemToMove=thresholdElemToMove, threadRate=publish_rate, threaded=threaded, enableMat=enableMat, saveOpts=saveOpts)
+    map = Mapper(mesh,
+                 segmentation_network,
+                 thresholdElemToMove=thresholdElemToMove,
+                 threadRate=publish_rate,
+                 threaded=threaded,
+                 enableMat=enableMat,
+                 saveOpts=saveOpts)
 
-    # Iterate over cameras TODO
-    rgb_sub = message_filters.Subscriber(cameras["image_rectified"], Image)
-    depth_sub = message_filters.Subscriber(cameras["depth_registered"], Image)
-    info_sub = message_filters.Subscriber(cameras["camera_info"], CameraInfo)
-    sub_list = [rgb_sub, depth_sub, info_sub]
+    if "pcl_registered" in cameras \
+            and cameras["pcl_registered"] is not None \
+            and len(cameras["pcl_registered"]) > 0:
+        pcl_sub = message_filters.Subscriber(cameras["pcl_registered"],
+                                             PointCloud2)
+        sub_list = [pcl_sub]
+    else:
+        # Iterate over cameras TODO
+        rgb_sub = message_filters.Subscriber(cameras["image_rectified"], Image)
+        depth_sub = message_filters.Subscriber(cameras["depth_registered"],
+                                               Image)
+        info_sub = message_filters.Subscriber(cameras["camera_info"],
+                                              CameraInfo)
+        sub_list = [rgb_sub, depth_sub, info_sub]
     if "pose_with_covariance" in cameras \
-        and cameras["pose_with_covariance"] is not None \
-        and len(cameras["pose_with_covariance"]) > 0:
-        pose_sub = message_filters.Subscriber(cameras["pose_with_covariance"], PoseWithCovarianceStamped)
+            and cameras["pose_with_covariance"] is not None \
+            and len(cameras["pose_with_covariance"]) > 0:
+        pose_sub = message_filters.Subscriber(cameras["pose_with_covariance"],
+                                              PoseWithCovarianceStamped)
         sub_list.append(pose_sub)
     elif "pose" in cameras \
-        and cameras["pose"] is not None \
-        and len(cameras["pose"]) > 0:
+            and cameras["pose"] is not None \
+            and len(cameras["pose"]) > 0:
         pose_sub = message_filters.Subscriber(cameras["pose"], Pose)
         sub_list.append(pose_sub)
 
     # Subscribe
-    sync_sub = message_filters.ApproximateTimeSynchronizer(sub_list, queue_size=queue_size, slop=sync_slop)
-    sync_sub.registerCallback(syncedCallback)
+    sync_sub = message_filters.ApproximateTimeSynchronizer(
+        sub_list, queue_size=queue_size, slop=sync_slop)
+    if len(sub_list) > 2:
+        sync_sub.registerCallback(syncedCallback)
+    else:
+        sync_sub.registerCallback(pclSyncedCallback)
     rospy.loginfo("[sel_map] Callbacks registered, awaiting...")
 
     # Spin
     rospy.spin()
     rospy.loginfo("[sel_map] Shutting down.")
 
+
 if __name__ == '__main__':
     try:
         argv = rospy.myargv(argv=sys.argv)
         if len(argv) <= 5:
-            print("Please provide mesh bounds, element size, and threshold to move")
+            print(
+                "Please provide mesh bounds, element size, and threshold to move"
+            )
             print("bound_x bound_y bound_z elem_size threshold_elem_move")
         mesh_bounds = [float(argv[1]), float(argv[2]), float(argv[3])]
         elem_size = float(argv[4])

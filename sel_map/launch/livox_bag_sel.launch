@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <launch>
   <!-- Mesh Bounds -->
-  <arg name="bound_xy" default="10"/>
+  <arg name="bound_xy" default="5"/>
   <arg name="bound_z" default="4"/>
   <arg name="elem_size" default="0.10"/>
   <arg name="threshold_elem_move" default="10"/>
@@ -10,12 +10,12 @@
   <!-- Data Specific Properties -->
   <arg name="terrain_properties"  default="csail_semseg_properties.yaml"/>
   <arg name="colorscale"  default="default.yaml"/>
-  <arg name="robot_config" default="spot_bag.yaml"/>
-  <arg name="semseg_config"         default="CSAIL_ResNet50ppm_ADE_full.yaml"/>
+  <arg name="robot_config" default="livox.yaml"/>
+  <arg name="semseg_config"         default="Bypass.yaml"/>
   <arg name="camera_flipped"        default="false"/>
 
   <!-- Visualization Properties -->
-  <arg name="open_rviz"             default="true"/>
+  <arg name="open_rviz"             default="false"/>
   <arg name="enable_mat_display"    default="true"/>
   <!-- Current version of mesh_tools crashes with this on, so we provide our own version of rviz-map-plugin -->
 
@@ -24,7 +24,7 @@
   <arg name="queue_size"            default="2"/>
 
   <!-- Publisher Properties -->
-  <arg name="publish_rate"          default="20"/>
+  <arg name="publish_rate"          default="1"/>
 
   <!-- Save Properties -->
   <arg name="save_mesh_location"    default=""/>
@@ -33,7 +33,7 @@
   <arg name="save_interval"         default="0"/>
 
   <!-- Run Specific Properties -->
-  <arg name="use_sim_time"          default="true"/>
+  <arg name="use_sim_time"          default="false"/>
   <arg name="external_manager"      default="false"/>
   <arg name="manager"               default="sel_map_manager"/>
   <arg name="required"              default="false"/>
